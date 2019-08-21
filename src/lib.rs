@@ -117,6 +117,7 @@ pub mod io;
 pub mod named_params;
 #[macro_use]
 pub mod packets;
+pub mod binlog;
 pub mod params;
 pub mod row;
 pub mod scramble;
