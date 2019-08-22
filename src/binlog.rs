@@ -7,7 +7,6 @@
 // byte 6 = mysql version (4) https://dev.mysql.com/doc/internals/en/binlog-version.html
 //
 
-
 // 00000000  00 00 00 00 00 04 01 00  00 00 32 00 00 00 00 00  |..........2.....|
 // 00000010  00 00 20 00 9e 02 00 00  00 00 00 00 70 61 79 6d  |.. .........paym|
 // 00000020  65 6e 74 2d 61 70 70 73  2d 62 69 6e 2e 30 30 30  |ent-apps-bin.000|
@@ -24,8 +23,82 @@ use crate::io::ReadMysqlExt;
 use byteorder::{LittleEndian as LE, ReadBytesExt, WriteBytesExt};
 use std::io::{self, Write};
 use std::fs::OpenOptions;
+use std::collections::BTreeMap;
 
-pub struct Event;
+use std::iter::Iterator;
+
+struct Reader {
+    inner: ::std::vec::IntoIter<Vec<u8>>,
+    tables: BTreeMap<u64, TableMapEventPacket>,
+    format: Option<FormatDescriptionEventPacket>,
+}
+
+impl Reader {
+    // TODO: generify this bullshit.
+    fn new(inner: ::std::vec::IntoIter<Vec<u8>>) -> Self {
+        Self {
+            inner: inner,
+            tables: BTreeMap::new(),
+            format: None,
+        }
+    }
+
+    fn make_new_row(&self, row: RowEventPacket) -> Row {
+        Row
+    }
+}
+
+impl Iterator for Reader {
+    type Item = RowEvent;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        for next in self.inner.iter() {
+            // skip OK byte
+            let mut payload = &next[1..];
+
+            match EventPacket::parse(&payload) {
+                Ok(EventPacket::Format(packet)) => {
+                    self.format = Some(packet);
+                },
+                Ok(EventPacket::TableMap(packet)) => {
+                    let table_id = packet.table_id;
+                    self.tables.insert(table_id, packet);
+                },
+                Ok(EventPacket::Rotate(packet)) => {
+                    // TODO
+                },
+                Ok(EventPacket::Insert(packet)) => {
+                    return Some(RowEvent::Insert(Row))
+                    // TODO
+                },
+                Ok(EventPacket::Update(packet)) => {
+                    return Some(RowEvent::Update(Row))
+                    // TODO
+                },
+                Ok(EventPacket::Delete(packet)) => {
+                    return Some(RowEvent::Delete(Row))
+                    // TODO
+                },
+                Ok(EventPacket::Unhandled(event_type, _)) => {
+                    println!("unhandled event type 0x{:02x?}", event_type);
+                }
+                Err(err) => {
+                    panic!(err)
+                }
+            }
+        }
+
+        None
+    }
+}
+
+pub enum RowEvent {
+    Insert(Row),
+    Update(Row),
+    Delete(Row),
+}
+
+pub struct Row;
 
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
@@ -113,156 +186,144 @@ impl From<u8> for EventType {
     }
 }
 
-pub fn parse_event2(mut payload: &[u8]) -> io::Result<Event> {
-    // skip OK byte
-    payload = &payload[1..];
+// pub fn parse_event2(mut payload: &[u8]) -> io::Result<()> {
+//     // skip OK byte
+//     payload = &payload[1..];
 
-    // println!("{:#X?}", payload);
+//     // parse rotate event
+//     let rotate_event = &payload[..45];
+//     println!("{:02x?}", rotate_event);
+//     payload = &payload[45..];
+//     EventPacket::parse(rotate_event);
 
-    // parse rotate event
-    let rotate_event = &payload[..45];
-    payload = &payload[45..];
-    parse_event(rotate_event);
+//     // skip OK byte
+//     payload = &payload[1..];
 
-    // let mut file = OpenOptions::new().write(true).truncate(true).open("/Users/maximebedard/Desktop/dump.lol")?;
-    // file.write_all(rotate_event)?;
+//     let format_event = &payload[..119];
+//     println!("{:02x?}", format_event);
+//     payload = &payload[119..];
+//     EventPacket::parse(format_event);
 
-    // skip OK byte
-    payload = &payload[1..];
+//     // skip OK byte
+//     payload = &payload[1..];
 
-    let format_event = &payload[..119];
-    payload = &payload[119..];
-    parse_event(format_event);
+//     let anonymous_gtid_event = &payload[..61];
+//     println!("{:02x?}", anonymous_gtid_event);
+//     payload = &payload[61..];
+//     EventPacket::parse(anonymous_gtid_event);
 
-    // skip OK byte
-    payload = &payload[1..];
+//     // skip OK byte
+//     payload = &payload[1..];
 
-    let anonymous_gtid_event = &payload[..61];
-    payload = &payload[61..];
-    parse_event(anonymous_gtid_event);
+//     let query_event = &payload[..68];
+//     println!("{:02x?}", query_event);
+//     payload = &payload[68..];
+//     EventPacket::parse(query_event);
 
-    // skip OK byte
-    payload = &payload[1..];
+//     // skip OK byte
+//     payload = &payload[1..];
 
-    let query_event = &payload[..68];
-    payload = &payload[68..];
-    parse_event(query_event);
+//     let table_map_event = &payload[..50];
+//     println!("{:02x?}", table_map_event);
+//     payload = &payload[50..];
+//     EventPacket::parse(table_map_event);
 
-    // skip OK byte
-    payload = &payload[1..];
+//     // skip OK byte
+//     payload = &payload[1..];
 
-    // let mut file = OpenOptions::new().write(true).truncate(true).open("/Users/maximebedard/Desktop/dump.lol")?;
-    // file.write_all(payload)?;
-    let table_map_event = &payload[..50];
-    payload = &payload[50..];
-    parse_event(table_map_event);
+//     let row_event = &payload[..55];
+//     println!("{:02x?}", row_event);
+//     payload = &payload[55..];
+//     EventPacket::parse(row_event);
 
-    // skip OK byte
-    payload = &payload[1..];
+//     // skip OK byte
+//     payload = &payload[1..];
 
-    let row_event = &payload[..55];
-    payload = &payload[55..];
-    parse_event(row_event);
+//     let xid_event = &payload[..27];
+//     println!("{:02x?}", xid_event);
+//     payload = &payload[27..];
+//     EventPacket::parse(xid_event);
 
-    // skip OK byte
-    payload = &payload[1..];
+//     Ok(())
+// }
 
-    let xid_event = &payload[..27];
-    payload = &payload[27..];
-    parse_event(xid_event)
+#[derive(Debug)]
+enum EventPacket {
+    TableMap(TableMapEventPacket),
+    Rotate(RotateEventPacket),
+    Format(FormatDescriptionEventPacket),
+    Insert(RowEventPacket),
+    Update(RowEventPacket),
+    Delete(RowEventPacket),
+    Unhandled(u8, Vec<u8>),
 }
 
-pub fn parse_event(mut payload: &[u8]) -> io::Result<Event> {
-    // always assume version > 1
-    if payload.len() < 19 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("expected len(event header) >= 19, got={}", payload.len()),
-        ));
+impl EventPacket {
+    fn parse(mut payload: &[u8]) -> io::Result<EventPacket> {
+        // always assume version > 1
+        if payload.len() < 19 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("expected len(event header) >= 19, got={}", payload.len()),
+            ));
+        }
+
+        // event header
+        let timestamp = payload.read_u32::<LE>()?;
+        let event_type = payload.read_u8()?;
+        let server_id = payload.read_u32::<LE>()?;
+        let event_size = payload.read_u32::<LE>()?;
+        let log_pos = payload.read_u32::<LE>()?;
+        let flags = payload.read_u16::<LE>()?;
+
+        // println!("timestamp = {:?}", timestamp);
+        // println!("server_id = {:?}", server_id);
+        // println!("event_type = {:#X?}", event_type);
+        // println!("event_size = {:?}", event_size);
+        // println!("log_pos = {:?}", log_pos);
+        // println!("flags = {:#X?}", flags);
+
+        payload = &payload[..(event_size as usize - 19)];
+
+        let event = match EventType::from(event_type) {
+            EventType::TABLE_MAP_EVENT => EventPacket::TableMap(TableMapEventPacket::parse(payload)?),
+            EventType::ROTATE_EVENT => EventPacket::Rotate(RotateEventPacket::parse(payload)?),
+            EventType::FORMAT_DESCRIPTION_EVENT => EventPacket::Format(FormatDescriptionEventPacket::parse(payload)?),
+            EventType::WRITE_ROWS_EVENTv0 => EventPacket::Insert(RowEventPacket::parse(payload, false, false)?),
+            EventType::WRITE_ROWS_EVENTv1 => EventPacket::Insert(RowEventPacket::parse(payload, false, false)?),
+            EventType::WRITE_ROWS_EVENTv2 => EventPacket::Insert(RowEventPacket::parse(payload, true, false)?),
+            EventType::UPDATE_ROWS_EVENTv0 => EventPacket::Update(RowEventPacket::parse(payload, false, false)?),
+            EventType::UPDATE_ROWS_EVENTv1 => EventPacket::Update(RowEventPacket::parse(payload, false, true)?),
+            EventType::UPDATE_ROWS_EVENTv2 => EventPacket::Update(RowEventPacket::parse(payload, true, true)?),
+            EventType::DELETE_ROWS_EVENTv0 => EventPacket::Delete(RowEventPacket::parse(payload, false, false)?),
+            EventType::DELETE_ROWS_EVENTv1 => EventPacket::Delete(RowEventPacket::parse(payload, false, false)?),
+            EventType::DELETE_ROWS_EVENTv2 => EventPacket::Delete(RowEventPacket::parse(payload, true, false)?),
+            unhandled_event_type => EventPacket::Unhandled(unhandled_event_type as u8, payload.into()),
+        };
+
+        match event {
+            EventPacket::Unhandled(unhandled_event_type, _) => {
+                println!("unhandled event type = {:?}", EventType::from(unhandled_event_type))
+            },
+            ref event => println!("{:#?}", event),
+        }
+
+        Ok(event)
     }
-
-    // event header
-    let timestamp = payload.read_u32::<LE>()?;
-    let event_type = payload.read_u8()?;
-    let server_id = payload.read_u32::<LE>()?;
-    let event_size = payload.read_u32::<LE>()?;
-    let log_pos = payload.read_u32::<LE>()?;
-    let flags = payload.read_u16::<LE>()?;
-
-    println!("timestamp = {:?}", timestamp);
-    println!("server_id = {:?}", server_id);
-    println!("event_type = {:#X?}", event_type);
-    println!("event_size = {:?}", event_size);
-    println!("log_pos = {:?}", log_pos);
-    println!("flags = {:#X?}", flags);
-
-    payload = &payload[..(event_size as usize - 19)];
-
-    match EventType::from(event_type) {
-        EventType::TABLE_MAP_EVENT => {
-            let evt = TableMapEvent::parse(payload);
-            println!("table map event {:?}", evt);
-        },
-        EventType::ROTATE_EVENT => {
-            let evt = RotateEvent::parse(payload);
-            println!("rotate event {:?}", evt);
-        }
-        EventType::WRITE_ROWS_EVENTv0 => {
-            let evt = RowEvent::parse(payload, false, false);
-            println!("write v0 {:?}", evt);
-        }
-        EventType::WRITE_ROWS_EVENTv1 => {
-            let evt = RowEvent::parse(payload, false, false);
-            println!("write v1 {:?}", evt);
-        }
-        EventType::WRITE_ROWS_EVENTv2 => {
-            let evt = RowEvent::parse(payload, true, false);
-            println!("write v2 {:?}", evt);
-        }
-        EventType::UPDATE_ROWS_EVENTv0 => {
-            let evt = RowEvent::parse(payload, false, false);
-            println!("update v0 {:?}", evt);
-        }
-        EventType::UPDATE_ROWS_EVENTv1 => {
-            let evt = RowEvent::parse(payload, false, true);
-            println!("update v1 {:?}", evt);
-        }
-        EventType::UPDATE_ROWS_EVENTv2 => {
-            let evt = RowEvent::parse(payload, true, true);
-            println!("update v2 {:?}", evt);
-        }
-        EventType::DELETE_ROWS_EVENTv0 => {
-            let evt = RowEvent::parse(payload, false, false);
-            println!("delete v0 {:?}", evt);
-        }
-        EventType::DELETE_ROWS_EVENTv1 => {
-            let evt = RowEvent::parse(payload, false, false);
-            println!("delete v1 {:?}", evt);
-        }
-        EventType::DELETE_ROWS_EVENTv2 => {
-            let evt = RowEvent::parse(payload, true, false);
-            println!("delete v2 {:?}", evt);
-        }
-        unhandled_event_type => {
-            println!("{:?} event is not handled.", unhandled_event_type);
-        },
-    };
-
-    Ok(Event)
 }
 
 #[derive(Debug)]
-struct RotateEvent {
+struct RotateEventPacket {
     position: u64,
     next_log_name: String,
 }
 
-impl RotateEvent {
-    fn parse(mut payload: &[u8]) -> io::Result<RotateEvent> {
+impl RotateEventPacket {
+    fn parse(mut payload: &[u8]) -> io::Result<RotateEventPacket> {
         let position = payload.read_u64::<LE>()?;
-        let next_log_name = String::from_utf8(payload.to_vec()).unwrap();
+        let next_log_name = String::from_utf8(Vec::from(payload)).unwrap();
 
-        Ok(RotateEvent{
+        Ok(RotateEventPacket{
             position: position,
             next_log_name: next_log_name,
         })
@@ -270,7 +331,7 @@ impl RotateEvent {
 }
 
 #[derive(Debug)]
-struct TableMapEvent {
+struct TableMapEventPacket {
     table_id: u64,
     flags: u16,
     schema: String,
@@ -282,26 +343,23 @@ struct TableMapEvent {
 }
 
 
-impl TableMapEvent {
-    fn parse(mut payload: &[u8]) -> io::Result<TableMapEvent> {
+impl TableMapEventPacket {
+    fn parse(mut payload: &[u8]) -> io::Result<TableMapEventPacket> {
         let table_id = payload.read_uint::<LE>(6)?; // this is actually a fixed length (either 4 or 6 bytes)
         let flags = payload.read_u16::<LE>()?;
 
         let schema_len = payload.read_u8()? as usize;
-        let schema = String::from_utf8((&payload[..schema_len]).to_vec()).unwrap();
+        let schema = String::from_utf8(Vec::from(&payload[..schema_len])).unwrap();
         payload = &payload[schema_len..]; // move cursor
-        println!("schema = {:?}", schema);
+        // println!("schema = {:?}", schema);
 
         // skip 0x00
         payload = &payload[1..];
 
-    //     let mut file = OpenOptions::new().write(true).truncate(true).open("/Users/maximebedard/Desktop/dump.lol")?;
-    // file.write_all(payload)?;
-
         let table_len = payload.read_u8()? as usize;
-        let table = String::from_utf8((&payload[..table_len]).to_vec()).unwrap();
+        let table = String::from_utf8(Vec::from(&payload[..table_len])).unwrap();
         payload = &payload[table_len..]; // move cursor
-        println!("table = {:?}", table);
+        // println!("table = {:?}", table);
 
         // skip 0x00
         payload = &payload[1..];
@@ -312,18 +370,10 @@ impl TableMapEvent {
             .map(ColumnType::from)
             .collect();
 
-        // println!("{:?}", column_types);
 
         let mut column_metas = vec![0; column_count];
 
-    // let mut file = OpenOptions::new().write(true).truncate(true).open("/Users/maximebedard/Desktop/dump.lol")?;
-    // file.write_all(payload)?;
-
-        // println!("{:?}", payload);
         let mut column_meta_reader = read_lenenc_str!(&mut payload)?;
-
-
-        // println!("{:?}", column_meta_reader);
 
         for (i, t) in column_types.iter().enumerate() {
             match t {
@@ -334,7 +384,7 @@ impl TableMapEvent {
                     | ColumnType::MYSQL_TYPE_VARCHAR
                     | ColumnType::MYSQL_TYPE_BIT => {
                         // TODO: there is a off by one somewhere, and this should be using read_u16;
-                        println!("a {:?}, {:?}", t, column_meta_reader);
+                        // println!("a {:?}, {:?}", t, column_meta_reader);
                         column_metas[i] = column_meta_reader.read_u8().unwrap() as u16;
                     }
 
@@ -344,7 +394,7 @@ impl TableMapEvent {
                     | ColumnType::MYSQL_TYPE_FLOAT
                     | ColumnType::MYSQL_TYPE_GEOMETRY
                     | ColumnType::MYSQL_TYPE_JSON => {
-                        println!("b {:?}", t);
+                        // println!("b {:?}", t);
                         column_metas[i] = column_meta_reader.read_u8().unwrap() as u16;
                     }
 
@@ -352,7 +402,7 @@ impl TableMapEvent {
                 ColumnType::MYSQL_TYPE_TIME2
                     | ColumnType::MYSQL_TYPE_DATETIME2
                     | ColumnType::MYSQL_TYPE_TIMESTAMP2 => {
-                        println!("c {:?}", t);
+                        // println!("c {:?}", t);
                         column_metas[i] = column_meta_reader.read_u8().unwrap() as u16;
                     }
 
@@ -369,7 +419,7 @@ impl TableMapEvent {
                     | ColumnType::MYSQL_TYPE_TIME
                     | ColumnType::MYSQL_TYPE_DATETIME
                     | ColumnType::MYSQL_TYPE_YEAR => {
-                        println!("d {:?}", t);
+                        // println!("d {:?}", t);
                         column_metas[i] = 0_u16;
                     }
 
@@ -384,7 +434,7 @@ impl TableMapEvent {
             Vec::new()
         };
 
-        Ok(TableMapEvent {
+        Ok(TableMapEventPacket {
             table_id: table_id,
             flags: flags,
             schema: schema,
@@ -398,7 +448,41 @@ impl TableMapEvent {
 }
 
 #[derive(Debug)]
-pub struct RowEvent {
+struct FormatDescriptionEventPacket {
+    version: u16,
+    server_version: String,
+    create_timestamp: u32,
+    event_header_length: u8,
+    event_type_header_lengths: Vec<u8>,
+}
+
+impl FormatDescriptionEventPacket {
+    fn parse(mut payload: &[u8]) -> io::Result<FormatDescriptionEventPacket> {
+        let version = payload.read_u16::<LE>()?;
+        let server_version = String::from_utf8(Vec::from(&payload[..50]))
+            .unwrap()
+            .trim_matches(char::from(0))
+            .to_string();
+
+        payload = &payload[50..];
+
+        let create_timestamp = payload.read_u32::<LE>()?;
+        let event_header_length = payload.read_u8()?;
+
+        let event_type_header_lengths = Vec::from(payload);
+
+        Ok(FormatDescriptionEventPacket {
+            version: version,
+            server_version: server_version,
+            create_timestamp: create_timestamp,
+            event_header_length: event_header_length,
+            event_type_header_lengths: event_type_header_lengths,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct RowEventPacket {
     table_id: u64,
     flags: u16,
     extras: Vec<u8>,
@@ -408,8 +492,8 @@ pub struct RowEvent {
     rows: Vec<u8>,
 }
 
-impl RowEvent {
-    fn parse(mut payload: &[u8], use_extras: bool, use_bitmap2: bool) -> io::Result<RowEvent> {
+impl RowEventPacket {
+    fn parse(mut payload: &[u8], use_extras: bool, use_bitmap2: bool) -> io::Result<RowEventPacket> {
         let table_id = payload.read_uint::<LE>(6)?;
         let flags = payload.read_u16::<LE>()?;
 
@@ -440,7 +524,7 @@ impl RowEvent {
 
         let rows = Vec::from(payload);
 
-        Ok(RowEvent {
+        Ok(RowEventPacket {
             table_id: table_id,
             flags: flags,
             extras: extras,
@@ -454,7 +538,8 @@ impl RowEvent {
 
 #[cfg(test)]
 mod test {
-    use super::{parse_event2};
+    use super::{Reader};
+    use std::iter::Iterator;
 
     #[test]
     fn parses_row_event() {
@@ -486,33 +571,74 @@ mod test {
         // 00000190  72 b5 c0 0f 00 fc 5a 5d  5d 10 01 00 00 00 1b 00  |r.....Z]].......|
         // 000001a0  00 00 9b 01 00 00 00 00  72 0e 00 00 00 00 00 00  |........r.......|
 
-        const EVENT : &[u8] = b"\x00\x00\x00\x00\x00\x04\x01\x00\x00\x00\x2d\x00\x00\x00\x00\x00\
-                                \x00\x00\x20\x00\x96\x00\x00\x00\x00\x00\x00\x00\x73\x68\x6f\x70\
-                                \x69\x66\x79\x2d\x62\x69\x6e\x2e\x30\x30\x30\x30\x30\x35\x00\xf2\
-                                \x43\x5d\x5d\x0f\x01\x00\x00\x00\x77\x00\x00\x00\x00\x00\x00\x00\
-                                \x00\x00\x04\x00\x35\x2e\x37\x2e\x31\x38\x2d\x31\x36\x2d\x6c\x6f\
-                                \x67\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\
-                                \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\
-                                \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x13\x38\x0d\x00\x08\x00\
-                                \x12\x00\x04\x04\x04\x04\x12\x00\x00\x5f\x00\x04\x1a\x08\x00\x00\
-                                \x00\x08\x08\x08\x02\x00\x00\x00\x0a\x0a\x0a\x2a\x2a\x00\x12\x34\
-                                \x00\x00\xc2\x36\x0c\xdf\x00\xfc\x5a\x5d\x5d\x22\x01\x00\x00\x00\
-                                \x3d\x00\x00\x00\xd3\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\
-                                \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\
-                                \x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\
-                                \x00\x00\x00\x00\x00\xfc\x5a\x5d\x5d\x02\x01\x00\x00\x00\x44\x00\
-                                \x00\x00\x17\x01\x00\x00\x08\x00\x3b\x18\x00\x00\x00\x00\x00\x00\
-                                \x04\x00\x00\x1a\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x40\x00\
-                                \x00\x00\x00\x06\x03\x73\x74\x64\x04\x21\x00\x21\x00\x2d\x00\x70\
-                                \x65\x74\x73\x00\x42\x45\x47\x49\x4e\x00\xfc\x5a\x5d\x5d\x13\x01\
-                                \x00\x00\x00\x32\x00\x00\x00\x49\x01\x00\x00\x00\x00\x2d\x0a\x00\
-                                \x00\x00\x00\x01\x00\x04\x70\x65\x74\x73\x00\x04\x63\x61\x74\x73\
-                                \x00\x04\x03\x0f\x0f\x0a\x04\x58\x02\x58\x02\x00\x00\xfc\x5a\x5d\
-                                \x5d\x1e\x01\x00\x00\x00\x37\x00\x00\x00\x80\x01\x00\x00\x00\x00\
-                                \x2d\x0a\x00\x00\x00\x00\x01\x00\x02\x00\x04\xff\xf0\x04\x00\x00\
-                                \x00\x07\x00\x43\x68\x61\x72\x6c\x69\x65\x05\x00\x52\x69\x76\x65\
-                                \x72\xb5\xc0\x0f\x00\xfc\x5a\x5d\x5d\x10\x01\x00\x00\x00\x1b\x00\
-                                \x00\x00\x9b\x01\x00\x00\x00\x00\x72\x0e\x00\x00\x00\x00\x00\x00";
+        // const A : &[u8] = b"\x00\x00\x00\x00\x00\x04\x01\x00\x00\x00\x2d\x00\x00\x00\x00\x00\
+        //                     \x00\x00\x20\x00\x96\x00\x00\x00\x00\x00\x00\x00\x73\x68\x6f\x70\
+        //                     \x69\x66\x79\x2d\x62\x69\x6e\x2e\x30\x30\x30\x30\x30\x35";
+
+        // const B : &[u8] = b"\x00\xf2\
+        //     \x43\x5d\x5d\x0f\x01\x00\x00\x00\x77\x00\x00\x00\x00\x00\x00\x00\
+        //     \x00\x00\x04\x00\x35\x2e\x37\x2e\x31\x38\x2d\x31\x36\x2d\x6c\x6f\
+        //     \x67\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\
+        //     \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\
+        //     \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x13\x38\x0d\x00\x08\x00\
+        //     \x12\x00\x04\x04\x04\x04\x12\x00\x00\x5f\x00\x04\x1a\x08\x00\x00\
+        //     \x00\x08\x08\x08\x02\x00\x00\x00\x0a\x0a\x0a\x2a\x2a\x00\x12\x34\
+        //     \x00\x00\xc2\x36\x0c\xdf";
+
+        const ROTATE_EVENT : &[u8] = b"\x00\x00\x00\x00\x00\x04\x01\x00\x00\x00\x2d\x00\x00\x00\x00\x00\x00\x00\x20\x00\x96\x00\x00\x00\x00\x00\x00\x00\x73\x68\x6f\x70\x69\x66\x79\x2d\x62\x69\x6e\x2e\x30\x30\x30\x30\x30\x35";
+        const FORMAT_DESCRIPTION_EVENT : &[u8] = b"\x00\xf2\x43\x5d\x5d\x0f\x01\x00\x00\x00\x77\x00\x00\x00\x00\x00\x00\x00\x00\x00\x04\x00\x35\x2e\x37\x2e\x31\x38\x2d\x31\x36\x2d\x6c\x6f\x67\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x13\x38\x0d\x00\x08\x00\x12\x00\x04\x04\x04\x04\x12\x00\x00\x5f\x00\x04\x1a\x08\x00\x00\x00\x08\x08\x08\x02\x00\x00\x00\x0a\x0a\x0a\x2a\x2a\x00\x12\x34\x00\x00\xc2\x36\x0c\xdf";
+        const ANONYMOUS_GTID_EVENT : &[u8] = b"\x00\xfc\x5a\x5d\x5d\x22\x01\x00\x00\x00\x3d\x00\x00\x00\xd3\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00";
+        const QUERY_EVENT : &[u8] = b"\x00\xfc\x5a\x5d\x5d\x02\x01\x00\x00\x00\x44\x00\x00\x00\x17\x01\x00\x00\x08\x00\x3b\x18\x00\x00\x00\x00\x00\x00\x04\x00\x00\x1a\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x40\x00\x00\x00\x00\x06\x03\x73\x74\x64\x04\x21\x00\x21\x00\x2d\x00\x70\x65\x74\x73\x00\x42\x45\x47\x49\x4e";
+        const TABLE_MAP_EVENT : &[u8] = b"\x00\xfc\x5a\x5d\x5d\x13\x01\x00\x00\x00\x32\x00\x00\x00\x49\x01\x00\x00\x00\x00\x2d\x0a\x00\x00\x00\x00\x01\x00\x04\x70\x65\x74\x73\x00\x04\x63\x61\x74\x73\x00\x04\x03\x0f\x0f\x0a\x04\x58\x02\x58\x02\x00";
+        const INSERT_ROW_EVENT : &[u8] = b"\x00\xfc\x5a\x5d\x5d\x1e\x01\x00\x00\x00\x37\x00\x00\x00\x80\x01\x00\x00\x00\x00\x2d\x0a\x00\x00\x00\x00\x01\x00\x02\x00\x04\xff\xf0\x04\x00\x00\x00\x07\x00\x43\x68\x61\x72\x6c\x69\x65\x05\x00\x52\x69\x76\x65\x72\xb5\xc0\x0f";
+        const XID_EVENT : &[u8] = b"\x00\xfc\x5a\x5d\x5d\x10\x01\x00\x00\x00\x1b\x00\x00\x00\x9b\x01\x00\x00\x00\x00\x72\x0e\x00\x00\x00\x00\x00\x00";
+
+        let events = vec![
+            ROTATE_EVENT.to_vec(),
+            FORMAT_DESCRIPTION_EVENT.to_vec(),
+            ANONYMOUS_GTID_EVENT.to_vec(),
+            QUERY_EVENT.to_vec(),
+            TABLE_MAP_EVENT.to_vec(),
+            INSERT_ROW_EVENT.to_vec(),
+            XID_EVENT.to_vec(),
+        ];
+
+        let mut reader = Reader::new(events.into_iter());
+        reader.next();
+        reader.next();
+        reader.next();
+        reader.next();
+        reader.next();
+        reader.next();
+        reader.next();
+
+        // const EVENT : &[u8] = b"\x00\x00\x00\x00\x00\x04\x01\x00\x00\x00\x2d\x00\x00\x00\x00\x00\
+        //                         \x00\x00\x20\x00\x96\x00\x00\x00\x00\x00\x00\x00\x73\x68\x6f\x70\
+        //                         \x69\x66\x79\x2d\x62\x69\x6e\x2e\x30\x30\x30\x30\x30\x35\x00\xf2\
+        //                         \x43\x5d\x5d\x0f\x01\x00\x00\x00\x77\x00\x00\x00\x00\x00\x00\x00\
+        //                         \x00\x00\x04\x00\x35\x2e\x37\x2e\x31\x38\x2d\x31\x36\x2d\x6c\x6f\
+        //                         \x67\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\
+        //                         \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\
+        //                         \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x13\x38\x0d\x00\x08\x00\
+        //                         \x12\x00\x04\x04\x04\x04\x12\x00\x00\x5f\x00\x04\x1a\x08\x00\x00\
+        //                         \x00\x08\x08\x08\x02\x00\x00\x00\x0a\x0a\x0a\x2a\x2a\x00\x12\x34\
+        //                         \x00\x00\xc2\x36\x0c\xdf\x00\xfc\x5a\x5d\x5d\x22\x01\x00\x00\x00\
+        //                         \x3d\x00\x00\x00\xd3\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\
+        //                         \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\
+        //                         \x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\
+        //                         \x00\x00\x00\x00\x00\xfc\x5a\x5d\x5d\x02\x01\x00\x00\x00\x44\x00\
+        //                         \x00\x00\x17\x01\x00\x00\x08\x00\x3b\x18\x00\x00\x00\x00\x00\x00\
+        //                         \x04\x00\x00\x1a\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x40\x00\
+        //                         \x00\x00\x00\x06\x03\x73\x74\x64\x04\x21\x00\x21\x00\x2d\x00\x70\
+        //                         \x65\x74\x73\x00\x42\x45\x47\x49\x4e\x00\xfc\x5a\x5d\x5d\x13\x01\
+        //                         \x00\x00\x00\x32\x00\x00\x00\x49\x01\x00\x00\x00\x00\x2d\x0a\x00\
+        //                         \x00\x00\x00\x01\x00\x04\x70\x65\x74\x73\x00\x04\x63\x61\x74\x73\
+        //                         \x00\x04\x03\x0f\x0f\x0a\x04\x58\x02\x58\x02\x00\x00\xfc\x5a\x5d\
+        //                         \x5d\x1e\x01\x00\x00\x00\x37\x00\x00\x00\x80\x01\x00\x00\x00\x00\
+        //                         \x2d\x0a\x00\x00\x00\x00\x01\x00\x02\x00\x04\xff\xf0\x04\x00\x00\
+        //                         \x00\x07\x00\x43\x68\x61\x72\x6c\x69\x65\x05\x00\x52\x69\x76\x65\
+        //                         \x72\xb5\xc0\x0f\x00\xfc\x5a\x5d\x5d\x10\x01\x00\x00\x00\x1b\x00\
+        //                         \x00\x00\x9b\x01\x00\x00\x00\x00\x72\x0e\x00\x00\x00\x00\x00\x00";
 
 
 
@@ -525,6 +651,6 @@ mod test {
         //                         \x08\x00\x12\x00\x04\x04\x04\x04\x12\x00\x00\x5f\x00\x04\x1a\x08\
         //                         \x00\x00\x00\x08\x08\x08\x02\x00\x00\x00\x0a\x0a\x0a\x2a\x2a\x00";
 
-        parse_event2(EVENT).unwrap();
+        // parse_event2(EVENT).unwrap();
     }
 }
