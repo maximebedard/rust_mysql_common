@@ -27,77 +27,68 @@ use std::collections::BTreeMap;
 
 use std::iter::Iterator;
 
-struct Reader {
-    inner: ::std::vec::IntoIter<Vec<u8>>,
+pub struct Reader {
     tables: BTreeMap<u64, TableMapEventPacket>,
     format: Option<FormatDescriptionEventPacket>,
 }
 
 impl Reader {
-    // TODO: generify this bullshit.
-    fn new(inner: ::std::vec::IntoIter<Vec<u8>>) -> Self {
+    pub fn new() -> Self {
         Self {
-            inner: inner,
             tables: BTreeMap::new(),
             format: None,
         }
     }
 
-    fn make_new_row(&self, row: RowEventPacket) -> Row {
-        Row
-    }
-}
-
-impl Iterator for Reader {
-    type Item = RowEvent;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        for next in self.inner.iter() {
-            // skip OK byte
-            let mut payload = &next[1..];
-
-            match EventPacket::parse(&payload) {
-                Ok(EventPacket::Format(packet)) => {
-                    self.format = Some(packet);
-                },
-                Ok(EventPacket::TableMap(packet)) => {
-                    let table_id = packet.table_id;
-                    self.tables.insert(table_id, packet);
-                },
-                Ok(EventPacket::Rotate(packet)) => {
-                    // TODO
-                },
-                Ok(EventPacket::Insert(packet)) => {
-                    return Some(RowEvent::Insert(Row))
-                    // TODO
-                },
-                Ok(EventPacket::Update(packet)) => {
-                    return Some(RowEvent::Update(Row))
-                    // TODO
-                },
-                Ok(EventPacket::Delete(packet)) => {
-                    return Some(RowEvent::Delete(Row))
-                    // TODO
-                },
-                Ok(EventPacket::Unhandled(event_type, _)) => {
-                    println!("unhandled event type 0x{:02x?}", event_type);
-                }
-                Err(err) => {
-                    panic!(err)
-                }
+    pub fn next_row_event(&mut self, mut payload: &[u8]) -> io::Result<Option<RowEvent>> {
+        match EventPacket::parse(&payload) {
+            Ok(EventPacket::Format(packet)) => {
+                self.format = Some(packet);
+                Ok(None)
+            },
+            Ok(EventPacket::TableMap(packet)) => {
+                let table_id = packet.table_id;
+                self.tables.insert(table_id, packet);
+                Ok(None)
+            },
+            Ok(EventPacket::Rotate(packet)) => {
+                Ok(None)
+            },
+            Ok(EventPacket::Insert(packet)) => {
+                let row = self.make_row_event(packet)?;
+                Ok(Some(RowEvent::Insert(row)))
+            },
+            Ok(EventPacket::Update(packet)) => {
+                let row = self.make_row_event(packet)?;
+                Ok(Some(RowEvent::Update(row)))
+            },
+            Ok(EventPacket::Delete(packet)) => {
+                let row = self.make_row_event(packet)?;
+                Ok(Some(RowEvent::Delete(row)))
+            },
+            Ok(EventPacket::Unhandled(event_type, _)) => {
+                println!("unhandled event type 0x{:02x?}", event_type);
+                Ok(None)
+            }
+            Err(err) => {
+                panic!(err)
             }
         }
+    }
 
-        None
+    fn make_row_event(&mut self, packet: RowEventPacket) -> io::Result<Row> {
+        Ok(Row)
     }
 }
 
+#[derive(Debug)]
 pub enum RowEvent {
     Insert(Row),
     Update(Row),
     Delete(Row),
 }
 
+#[derive(Debug)]
 pub struct Row;
 
 #[allow(non_camel_case_types)]
@@ -260,6 +251,9 @@ enum EventPacket {
 
 impl EventPacket {
     fn parse(mut payload: &[u8]) -> io::Result<EventPacket> {
+        // skip OK byte
+        payload = &payload[1..];
+
         // always assume version > 1
         if payload.len() < 19 {
             return Err(io::Error::new(
@@ -603,14 +597,21 @@ mod test {
             XID_EVENT.to_vec(),
         ];
 
-        let mut reader = Reader::new(events.into_iter());
-        reader.next();
-        reader.next();
-        reader.next();
-        reader.next();
-        reader.next();
-        reader.next();
-        reader.next();
+        let mut reader = Reader::new();
+        for e in events {
+            reader.next_row_event(&e);
+        }
+        // for lol in Reader::new(events.iter()) {
+        //     println!("{:?}", lol);
+        // }
+        // let mut reader = ;
+        // reader.next();
+        // reader.next();
+        // reader.next();
+        // reader.next();
+        // reader.next();
+        // reader.next();
+        // reader.next();
 
         // const EVENT : &[u8] = b"\x00\x00\x00\x00\x00\x04\x01\x00\x00\x00\x2d\x00\x00\x00\x00\x00\
         //                         \x00\x00\x20\x00\x96\x00\x00\x00\x00\x00\x00\x00\x73\x68\x6f\x70\
